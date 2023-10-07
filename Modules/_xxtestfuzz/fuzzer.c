@@ -493,21 +493,19 @@ static int fuzz_zipfile_open(const char* data, size_t size) {
 
 
 
-
-
 #define MAX_TARFILE_TEST_SIZE 0x100000
 PyObject* tarfile_module = NULL;
-PyObject* tarfile_error = NULL;
+PyObject* tar_error = NULL;
 
 /* Called by LLVMFuzzerTestOneInput for initialization */
 static int init_tarfile_open(void) {
-    /* Import tarfile and tarfile.TarError */
+    /* Import tarfile */
     tarfile_module = PyImport_ImportModule("tarfile");
     if (tarfile_module == NULL) {
         return 0;
     }
-    tarfile_error = PyObject_GetAttrString(tarfile_module, "TarError");
-    return tarfile_error != NULL;
+    tar_error = PyObject_GetAttrString(tarfile_module, "TarError");
+    return tar_error != NULL;
 }
 
 /* Fuzz tarfile.open() with in-memory file-like object */
@@ -542,15 +540,14 @@ static int fuzz_tarfile_open(const char* data, size_t size) {
         return 0;
     }
 
-    PyObject* tar = PyObject_CallMethod(tarfile_module, "open", "sO", "r", bytes_io);
+    PyObject* tar = PyObject_CallFunction(tarfile_module, "open", "Oss", bytes_io, "r", ":gz");
     if (tar) {
         /* If successfully opened, close the tarfile */
         PyObject_CallMethod(tar, "close", NULL);
     }
 
-    /* Ignore tarfile.TarError because we're probably going to generate
-       some bad tar files */
-    if (PyErr_ExceptionMatches(tarfile_error)) {
+    /* Handle TarError and ValueError */
+    if (PyErr_ExceptionMatches(tar_error) || PyErr_ExceptionMatches(PyExc_ValueError)) {
         PyErr_Clear();
     }
 
@@ -561,9 +558,6 @@ static int fuzz_tarfile_open(const char* data, size_t size) {
     Py_DECREF(s);
     return 0;
 }
-
-
-
 
 
 
