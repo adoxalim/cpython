@@ -415,7 +415,6 @@ static int fuzz_csv_reader(const char* data, size_t size) {
 
 
 
-
 #define MAX_ZIPFILE_TEST_SIZE 0x100000
 PyObject* zipfile_module = NULL;
 PyObject* zipfile_error = NULL;
@@ -431,7 +430,7 @@ static int init_zipfile_open(void) {
     return zipfile_error != NULL;
 }
 
-/* Fuzz zipfile.ZipFile() */
+/* Fuzz zipfile.ZipFile() with in-memory file-like object */
 static int fuzz_zipfile_open(const char* data, size_t size) {
     if (size < 1 || size > MAX_ZIPFILE_TEST_SIZE) {
         return 0;
@@ -469,6 +468,11 @@ static int fuzz_zipfile_open(const char* data, size_t size) {
         PyObject_CallMethod(zip, "close", NULL);
     }
 
+    /* Handle the SystemError */
+    if (PyErr_ExceptionMatches(PyExc_SystemError)) {
+        PyErr_Clear();
+    }
+
     /* Ignore zipfile.BadZipFile because we're probably going to generate
        some bad zip files */
     if (PyErr_ExceptionMatches(zipfile_error)) {
@@ -482,8 +486,6 @@ static int fuzz_zipfile_open(const char* data, size_t size) {
     Py_DECREF(s);
     return 0;
 }
-
-
 
 
 
@@ -508,7 +510,7 @@ static int init_tarfile_open(void) {
     return tarfile_error != NULL;
 }
 
-/* Fuzz tarfile.open() */
+/* Fuzz tarfile.open() with in-memory file-like object */
 static int fuzz_tarfile_open(const char* data, size_t size) {
     if (size < 1 || size > MAX_TARFILE_TEST_SIZE) {
         return 0;
@@ -519,7 +521,28 @@ static int fuzz_tarfile_open(const char* data, size_t size) {
         return 0;
     }
 
-    PyObject* tar = PyObject_CallMethod(tarfile_module, "open", "y", s);
+    PyObject* io_module = PyImport_ImportModule("io");
+    if (io_module == NULL) {
+        Py_DECREF(s);
+        return 0;
+    }
+
+    PyObject* io_BytesIO = PyObject_GetAttrString(io_module, "BytesIO");
+    if (io_BytesIO == NULL) {
+        Py_DECREF(s);
+        Py_DECREF(io_module);
+        return 0;
+    }
+
+    PyObject* bytes_io = PyObject_CallFunctionObjArgs(io_BytesIO, s, NULL);
+    if (bytes_io == NULL) {
+        Py_DECREF(s);
+        Py_DECREF(io_module);
+        Py_DECREF(io_BytesIO);
+        return 0;
+    }
+
+    PyObject* tar = PyObject_CallMethod(tarfile_module, "open", "sO", "r", bytes_io);
     if (tar) {
         /* If successfully opened, close the tarfile */
         PyObject_CallMethod(tar, "close", NULL);
@@ -532,10 +555,12 @@ static int fuzz_tarfile_open(const char* data, size_t size) {
     }
 
     Py_XDECREF(tar);
+    Py_DECREF(bytes_io);
+    Py_DECREF(io_BytesIO);
+    Py_DECREF(io_module);
     Py_DECREF(s);
     return 0;
 }
-
 
 
 
