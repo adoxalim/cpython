@@ -394,6 +394,159 @@ static int fuzz_csv_reader(const char* data, size_t size) {
     return 0;
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#define MAX_ZIPFILE_TEST_SIZE 0x100000
+PyObject* zipfile_module = NULL;
+PyObject* zipfile_error = NULL;
+
+/* Called by LLVMFuzzerTestOneInput for initialization */
+static int init_zipfile_open(void) {
+    /* Import zipfile and zipfile.BadZipFile */
+    zipfile_module = PyImport_ImportModule("zipfile");
+    if (zipfile_module == NULL) {
+        return 0;
+    }
+    zipfile_error = PyObject_GetAttrString(zipfile_module, "BadZipFile");
+    return zipfile_error != NULL;
+}
+
+/* Fuzz zipfile.ZipFile() */
+static int fuzz_zipfile_open(const char* data, size_t size) {
+    if (size < 1 || size > MAX_ZIPFILE_TEST_SIZE) {
+        return 0;
+    }
+
+    PyObject* s = PyBytes_FromStringAndSize(data, size);
+    if (s == NULL) {
+        return 0;
+    }
+
+    PyObject* io_module = PyImport_ImportModule("io");
+    if (io_module == NULL) {
+        Py_DECREF(s);
+        return 0;
+    }
+
+    PyObject* io_BytesIO = PyObject_GetAttrString(io_module, "BytesIO");
+    if (io_BytesIO == NULL) {
+        Py_DECREF(s);
+        Py_DECREF(io_module);
+        return 0;
+    }
+
+    PyObject* bytes_io = PyObject_CallFunctionObjArgs(io_BytesIO, s, NULL);
+    if (bytes_io == NULL) {
+        Py_DECREF(s);
+        Py_DECREF(io_module);
+        Py_DECREF(io_BytesIO);
+        return 0;
+    }
+
+    PyObject* zip = PyObject_CallFunction(zipfile_module, "ZipFile", bytes_io);
+    if (zip) {
+        /* If successfully opened, close the zipfile */
+        PyObject_CallMethod(zip, "close", NULL);
+    }
+
+    /* Ignore zipfile.BadZipFile because we're probably going to generate
+       some bad zip files */
+    if (PyErr_ExceptionMatches(zipfile_error)) {
+        PyErr_Clear();
+    }
+
+    Py_XDECREF(zip);
+    Py_DECREF(bytes_io);
+    Py_DECREF(io_BytesIO);
+    Py_DECREF(io_module);
+    Py_DECREF(s);
+    return 0;
+}
+
+
+
+
+
+
+
+
+
+
+
+#define MAX_TARFILE_TEST_SIZE 0x100000
+PyObject* tarfile_module = NULL;
+PyObject* tarfile_error = NULL;
+
+/* Called by LLVMFuzzerTestOneInput for initialization */
+static int init_tarfile_open(void) {
+    /* Import tarfile and tarfile.TarError */
+    tarfile_module = PyImport_ImportModule("tarfile");
+    if (tarfile_module == NULL) {
+        return 0;
+    }
+    tarfile_error = PyObject_GetAttrString(tarfile_module, "TarError");
+    return tarfile_error != NULL;
+}
+
+/* Fuzz tarfile.open() */
+static int fuzz_tarfile_open(const char* data, size_t size) {
+    if (size < 1 || size > MAX_TARFILE_TEST_SIZE) {
+        return 0;
+    }
+
+    PyObject* s = PyBytes_FromStringAndSize(data, size);
+    if (s == NULL) {
+        return 0;
+    }
+
+    PyObject* tar = PyObject_CallMethod(tarfile_module, "open", "y", s);
+    if (tar) {
+        /* If successfully opened, close the tarfile */
+        PyObject_CallMethod(tar, "close", NULL);
+    }
+
+    /* Ignore tarfile.TarError because we're probably going to generate
+       some bad tar files */
+    if (PyErr_ExceptionMatches(tarfile_error)) {
+        PyErr_Clear();
+    }
+
+    Py_XDECREF(tar);
+    Py_DECREF(s);
+    return 0;
+}
+
+
+
+
+
+
+
+
+
+
+
+
 #define MAX_AST_LITERAL_EVAL_TEST_SIZE 0x100000
 PyObject* ast_literal_eval_method = NULL;
 /* Called by LLVMFuzzerTestOneInput for initialization */
@@ -559,6 +712,39 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
     rv |= _run_fuzz(data, size, fuzz_csv_reader);
 #endif
+
+
+
+
+
+
+#if !defined(_Py_FUZZ_ONE) || defined(_Py_FUZZ_fuzz_tarfile_open)
+    static int TARFILE_OPEN_INITIALIZED = 0;
+    if (!TARFILE_OPEN_INITIALIZED && !init_tarfile_open()) {
+        PyErr_Print();
+        abort();
+    } else {
+        TARFILE_OPEN_INITIALIZED = 1;
+    }
+
+    rv |= _run_fuzz(data, size, fuzz_tarfile_open);
+#endif
+
+
+#if !defined(_Py_FUZZ_ONE) || defined(_Py_FUZZ_fuzz_zipfile_open)
+    static int ZIPFILE_OPEN_INITIALIZED = 0;
+    if (!ZIPFILE_OPEN_INITIALIZED && !init_zipfile_open()) {
+        PyErr_Print();
+        abort();
+    } else {
+        ZIPFILE_OPEN_INITIALIZED = 1;
+    }
+
+    rv |= _run_fuzz(data, size, fuzz_zipfile_open);
+#endif
+
+
+
 #if !defined(_Py_FUZZ_ONE) || defined(_Py_FUZZ_fuzz_ast_literal_eval)
     static int AST_LITERAL_EVAL_INITIALIZED = 0;
     if (!AST_LITERAL_EVAL_INITIALIZED && !init_ast_literal_eval()) {
